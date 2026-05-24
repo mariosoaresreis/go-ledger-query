@@ -1,0 +1,104 @@
+version: "3.9"
+
+# ── Run the full CQRS stack locally ──────────────────────────────────────────
+# command-service writes to its own postgres and publishes to Kafka.
+# query-service consumes from Kafka and writes to its own postgres (projections).
+#
+# Usage:
+#   docker compose up           — start everything
+#   docker compose up query     — start only the query side + dependencies
+
+services:
+
+  # ── Shared infrastructure ──────────────────────────────────────────────────
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on: [zookeeper]
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ── command-service stack (write side) ────────────────────────────────────
+
+  postgres-command:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER:     ledger
+      POSTGRES_PASSWORD: ledger
+      POSTGRES_DB:       ledger_command
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgcommand:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger"]
+      interval: 5s
+      retries: 10
+
+  command:
+    build:
+      context: ../ledger-command   # path to the command repo
+      dockerfile: Dockerfile
+    depends_on:
+      postgres-command: { condition: service_healthy }
+      kafka:            { condition: service_healthy }
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://ledger:ledger@postgres-command:5432/ledger_command"
+      KAFKA_BROKER: "kafka:29092"
+      GIN_MODE:     "debug"
+      PORT:         "8080"
+
+  # ── query-service stack (read side) ───────────────────────────────────────
+
+  postgres-query:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER:     ledger
+      POSTGRES_PASSWORD: ledger
+      POSTGRES_DB:       ledger_query
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgquery:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger"]
+      interval: 5s
+      retries: 10
+
+  query:
+    build: .
+    depends_on:
+      postgres-query: { condition: service_healthy }
+      kafka:          { condition: service_healthy }
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: "postgres://ledger:ledger@postgres-query:5432/ledger_query"
+      KAFKA_BROKER: "kafka:29092"
+      GIN_MODE:     "debug"
+      PORT:         "8081"
+
+volumes:
+  pgcommand:
+  pgquery:

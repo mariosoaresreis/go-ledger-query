@@ -1,0 +1,15 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="ledger-query" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="go-ledger-query" />
+    <working_directory value="$PROJECT_DIR$" />
+    <kind value="PACKAGE" />
+    <package value="github.com/mariosoaresreis/go-ledger-query/cmd/api" />
+    <directory value="$PROJECT_DIR$/cmd/api" />
+    <filePath value="$PROJECT_DIR$/cmd/api/main.go" />
+    <envs>
+      <env name="GIN_MODE" value="debug" />
+    </envs>
+    <method v="2" />
+  </configuration>
+</component>
+
