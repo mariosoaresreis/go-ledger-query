@@ -1,7 +1,7 @@
 // Package main is the query-service composition root.
 // It wires every layer together and starts two concurrent loops:
-//   1. Kafka consumer → projection updates (writes to read DB)
-//   2. HTTP server    → query responses  (reads from read DB)
+//  1. Kafka consumer → projection updates (writes to read DB)
+//  2. HTTP server    → query responses  (reads from read DB)
 package main
 
 import (
@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	kafkaadapter "github.com/mariosoaresreis/go-ledger-query/internal/adapters/kafka"
 	pgadapter "github.com/mariosoaresreis/go-ledger-query/internal/adapters/postgres"
 	"github.com/mariosoaresreis/go-ledger-query/internal/application"
+	"github.com/mariosoaresreis/go-ledger-query/internal/docs"
 	"github.com/mariosoaresreis/go-ledger-query/internal/handler"
 	"github.com/mariosoaresreis/go-ledger-query/internal/observability"
 )
@@ -49,11 +51,11 @@ func main() {
 	//  Kafka msg → Consumer → Dispatcher → ReadRepository (postgres upsert)
 	//  HTTP GET  → Handler  → QueryService → ReadRepository (postgres select)
 	//
-	repo       := pgadapter.New(pool)
+	repo := pgadapter.New(pool)
 	dispatcher := kafkaadapter.NewDispatcher(repo, log)
-	consumer   := kafkaadapter.NewConsumer(brokers, dispatcher, log)
-	svc        := application.New(repo, log)
-	h          := handler.New(svc, log)
+	consumer := kafkaadapter.NewConsumer(brokers, dispatcher, log)
+	svc := application.New(repo, log)
+	h := handler.New(svc, log)
 
 	// ── Kafka consumer (runs in background goroutine) ─────────────────────────
 	consumerDone := make(chan error, 1)
@@ -83,6 +85,15 @@ func main() {
 	})
 	// Prometheus metrics endpoint — scraped by prometheus or any OTEL collector.
 	r.GET("/metrics", gin.WrapH(observability.MetricsHandler()))
+	r.GET("/swagger-doc.json", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/json; charset=utf-8", docs.QueryOpenAPI())
+	})
+	r.GET("/swagger", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(swaggerUIHTML("/swagger-doc.json")))
+	})
+	r.GET("/swagger/index.html", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(swaggerUIHTML("/swagger-doc.json")))
+	})
 
 	h.Register(r.Group("/v1"))
 
@@ -177,4 +188,26 @@ func requestLogger(log *zap.Logger) gin.HandlerFunc {
 			zap.String("ip", c.ClientIP()),
 		)
 	}
+}
+
+func swaggerUIHTML(specPath string) string {
+	return strings.ReplaceAll(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: "__SPEC_PATH__",
+      dom_id: "#swagger-ui"
+    });
+  </script>
+</body>
+</html>
+`, "__SPEC_PATH__", specPath)
 }
